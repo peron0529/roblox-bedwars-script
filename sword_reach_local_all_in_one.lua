@@ -22,7 +22,6 @@ local SwordReach = {
         Emerald = 18,
     },
     Default = 14,
-    -- 「伸びてるのが分かる」ように初期値と上限を強化
     BonusMin = 0,
     BonusMax = 30,
     GlobalBonus = 12,
@@ -42,8 +41,6 @@ function SwordReach.canHitFromParts(attackerPart, targetPart, swordName)
 
     local centerDistance = (attackerPart.Position - targetPart.Position).Magnitude
     local reach = SwordReach.getReach(swordName)
-
-    -- 中心点同士だと短く感じるので、当たり判定の厚みを少し加算
     local partPadding = (attackerPart.Size.Magnitude + targetPart.Size.Magnitude) * 0.15
     return centerDistance <= (reach + partPadding)
 end
@@ -105,7 +102,48 @@ local function getCharacterFromPart(part)
         return nil
     end
 
+    local root = model:FindFirstChild("HumanoidRootPart")
+    if not root then
+        return nil
+    end
+
     return model
+end
+
+local function getForwardFallbackTarget(attackerCharacter, reach)
+    local attackerRoot = attackerCharacter:FindFirstChild("HumanoidRootPart")
+    if not attackerRoot then
+        return nil
+    end
+
+    local bestTarget = nil
+    local bestDistance = math.huge
+    local attackerPos = attackerRoot.Position
+    local forward = attackerRoot.CFrame.LookVector
+
+    for _, candidate in ipairs(Workspace:GetDescendants()) do
+        if candidate:IsA("Humanoid") and candidate.Health > 0 then
+            local model = candidate.Parent
+            if model and model ~= attackerCharacter then
+                local root = model:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local offset = root.Position - attackerPos
+                    local dist = offset.Magnitude
+                    if dist <= reach then
+                        local dir = offset.Unit
+                        local forwardDot = forward:Dot(dir)
+                        -- 正面寄りを優先（後ろは除外）
+                        if forwardDot > -0.15 and dist < bestDistance then
+                            bestDistance = dist
+                            bestTarget = model
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return bestTarget
 end
 
 local function getAimTargetCharacter(screenPos)
@@ -117,30 +155,37 @@ local function getAimTargetCharacter(screenPos)
     if not camera then
         camera = Workspace.CurrentCamera
     end
-    if not camera then
-        return nil
+
+    local swordTier = getEquippedSwordTier(character)
+    local effectiveReach = SwordReach.getReach(swordTier)
+
+    if camera then
+        local viewportPoint
+        if screenPos then
+            viewportPoint = Vector2.new(screenPos.X, screenPos.Y)
+        else
+            local mouseLocation = UserInputService:GetMouseLocation()
+            viewportPoint = Vector2.new(mouseLocation.X, mouseLocation.Y)
+        end
+
+        local ray = camera:ViewportPointToRay(viewportPoint.X, viewportPoint.Y)
+        local params = RaycastParams.new()
+        params.FilterType = Enum.RaycastFilterType.Exclude
+        params.FilterDescendantsInstances = { character }
+        params.IgnoreWater = true
+
+        -- 固定長500ではなく、実際のリーチに連動させる
+        local result = Workspace:Raycast(ray.Origin, ray.Direction * (effectiveReach + 8), params)
+        if result then
+            local hitCharacter = getCharacterFromPart(result.Instance)
+            if hitCharacter then
+                return hitCharacter
+            end
+        end
     end
 
-    local viewportPoint
-    if screenPos then
-        viewportPoint = Vector2.new(screenPos.X, screenPos.Y)
-    else
-        local mouseLocation = UserInputService:GetMouseLocation()
-        viewportPoint = Vector2.new(mouseLocation.X, mouseLocation.Y)
-    end
-
-    local ray = camera:ViewportPointToRay(viewportPoint.X, viewportPoint.Y)
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    params.FilterDescendantsInstances = { character }
-    params.IgnoreWater = true
-
-    local result = Workspace:Raycast(ray.Origin, ray.Direction * 500, params)
-    if not result then
-        return nil
-    end
-
-    return getCharacterFromPart(result.Instance)
+    -- レイが外れた場合の救済: リーチ内の正面ターゲットを自動選択
+    return getForwardFallbackTarget(character, effectiveReach + 4)
 end
 
 local function createMobileUI()
@@ -152,7 +197,6 @@ local function createMobileUI()
     local panel = Instance.new("Frame")
     panel.Name = "Panel"
     panel.Size = UDim2.fromOffset(230, 128)
-    -- 右下に固定
     panel.AnchorPoint = Vector2.new(1, 1)
     panel.Position = UDim2.new(1, -12, 1, -12)
     panel.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
@@ -208,7 +252,6 @@ local function createMobileUI()
 
     local showUIButton = Instance.new("TextButton")
     showUIButton.Size = UDim2.fromOffset(52, 28)
-    -- 右下にUI復帰ボタン
     showUIButton.AnchorPoint = Vector2.new(1, 1)
     showUIButton.Position = UDim2.new(1, -12, 1, -12)
     showUIButton.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
