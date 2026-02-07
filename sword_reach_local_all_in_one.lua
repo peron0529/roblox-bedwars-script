@@ -1,10 +1,5 @@
 -- LocalScript 1本で完結するソードリーチ判定（BedWars風）
 -- 例: StarterPlayerScripts に配置
--- 追加機能:
--- 1) NPC/プレイヤー両対応
--- 2) リーチ増加量スライダー
--- 3) モバイル向けタップON/OFF
--- 4) GUIを隠す/再表示するボタン
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -23,8 +18,8 @@ local SwordReach = {
     },
     Default = 14,
     BonusMin = 0,
-    BonusMax = 30,
-    GlobalBonus = 12,
+    BonusMax = 40,
+    GlobalBonus = 16,
     Enabled = true,
 }
 
@@ -35,13 +30,13 @@ function SwordReach.getReach(swordName)
 end
 
 function SwordReach.canHitFromParts(attackerPart, targetPart, swordName)
-    if attackerPart == nil or targetPart == nil then
+    if not attackerPart or not targetPart then
         return false
     end
 
     local centerDistance = (attackerPart.Position - targetPart.Position).Magnitude
     local reach = SwordReach.getReach(swordName)
-    local partPadding = (attackerPart.Size.Magnitude + targetPart.Size.Magnitude) * 0.15
+    local partPadding = (attackerPart.Size.Magnitude + targetPart.Size.Magnitude) * 0.2
     return centerDistance <= (reach + partPadding)
 end
 
@@ -50,7 +45,7 @@ function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
         return false
     end
 
-    if attackerCharacter == nil or targetCharacter == nil then
+    if not attackerCharacter or not targetCharacter then
         return false
     end
 
@@ -87,18 +82,13 @@ local function getEquippedSwordTier(character)
     return "Wood"
 end
 
-local function getCharacterFromPart(part)
-    if not part then
+local function getValidTargetModelFromHumanoid(humanoid, attackerCharacter)
+    if not humanoid or humanoid.Health <= 0 then
         return nil
     end
 
-    local model = part:FindFirstAncestorOfClass("Model")
-    if not model then
-        return nil
-    end
-
-    local hum = model:FindFirstChildOfClass("Humanoid")
-    if not hum then
+    local model = humanoid.Parent
+    if not model or model == attackerCharacter then
         return nil
     end
 
@@ -110,31 +100,61 @@ local function getCharacterFromPart(part)
     return model
 end
 
-local function getForwardFallbackTarget(attackerCharacter, reach)
+local function getPointerPosition(screenPos)
+    if screenPos then
+        return Vector2.new(screenPos.X, screenPos.Y)
+    end
+    local mouseLocation = UserInputService:GetMouseLocation()
+    return Vector2.new(mouseLocation.X, mouseLocation.Y)
+end
+
+-- ここを距離ベースにして、リーチ増加の効果が必ず出るようにする
+local function getBestTargetCharacter(attackerCharacter, swordTier, screenPos)
     local attackerRoot = attackerCharacter:FindFirstChild("HumanoidRootPart")
     if not attackerRoot then
         return nil
     end
 
-    local bestTarget = nil
-    local bestDistance = math.huge
-    local attackerPos = attackerRoot.Position
-    local forward = attackerRoot.CFrame.LookVector
+    if not camera then
+        camera = Workspace.CurrentCamera
+    end
 
-    for _, candidate in ipairs(Workspace:GetDescendants()) do
-        if candidate:IsA("Humanoid") and candidate.Health > 0 then
-            local model = candidate.Parent
-            if model and model ~= attackerCharacter then
-                local root = model:FindFirstChild("HumanoidRootPart")
-                if root then
-                    local offset = root.Position - attackerPos
-                    local dist = offset.Magnitude
-                    if dist <= reach then
-                        local dir = offset.Unit
-                        local forwardDot = forward:Dot(dir)
-                        -- 正面寄りを優先（後ろは除外）
-                        if forwardDot > -0.15 and dist < bestDistance then
-                            bestDistance = dist
+    local pointerPos = getPointerPosition(screenPos)
+    local reach = SwordReach.getReach(swordTier)
+    local bestTarget = nil
+    local bestScore = math.huge
+
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Humanoid") then
+            local model = getValidTargetModelFromHumanoid(obj, attackerCharacter)
+            if model then
+                local targetRoot = model:FindFirstChild("HumanoidRootPart")
+                local worldDistance = (targetRoot.Position - attackerRoot.Position).Magnitude
+
+                -- リーチ内のみ対象にする（ここで伸びた分が直接効く）
+                if worldDistance <= (reach + 6) then
+                    local forward = attackerRoot.CFrame.LookVector
+                    local dir = (targetRoot.Position - attackerRoot.Position).Unit
+                    local forwardDot = forward:Dot(dir)
+
+                    -- ある程度前方を優先
+                    if forwardDot > -0.2 then
+                        local screenPenalty = 0
+
+                        if camera then
+                            local viewportPos, onScreen = camera:WorldToViewportPoint(targetRoot.Position)
+                            if onScreen then
+                                local delta = Vector2.new(viewportPos.X, viewportPos.Y) - pointerPos
+                                screenPenalty = delta.Magnitude * 0.03
+                            else
+                                screenPenalty = 12
+                            end
+                        end
+
+                        -- 距離優先 + 画面中央寄り優先
+                        local score = worldDistance + screenPenalty
+                        if score < bestScore then
+                            bestScore = score
                             bestTarget = model
                         end
                     end
@@ -144,48 +164,6 @@ local function getForwardFallbackTarget(attackerCharacter, reach)
     end
 
     return bestTarget
-end
-
-local function getAimTargetCharacter(screenPos)
-    local character = localPlayer.Character
-    if not character then
-        return nil
-    end
-
-    if not camera then
-        camera = Workspace.CurrentCamera
-    end
-
-    local swordTier = getEquippedSwordTier(character)
-    local effectiveReach = SwordReach.getReach(swordTier)
-
-    if camera then
-        local viewportPoint
-        if screenPos then
-            viewportPoint = Vector2.new(screenPos.X, screenPos.Y)
-        else
-            local mouseLocation = UserInputService:GetMouseLocation()
-            viewportPoint = Vector2.new(mouseLocation.X, mouseLocation.Y)
-        end
-
-        local ray = camera:ViewportPointToRay(viewportPoint.X, viewportPoint.Y)
-        local params = RaycastParams.new()
-        params.FilterType = Enum.RaycastFilterType.Exclude
-        params.FilterDescendantsInstances = { character }
-        params.IgnoreWater = true
-
-        -- 固定長500ではなく、実際のリーチに連動させる
-        local result = Workspace:Raycast(ray.Origin, ray.Direction * (effectiveReach + 8), params)
-        if result then
-            local hitCharacter = getCharacterFromPart(result.Instance)
-            if hitCharacter then
-                return hitCharacter
-            end
-        end
-    end
-
-    -- レイが外れた場合の救済: リーチ内の正面ターゲットを自動選択
-    return getForwardFallbackTarget(character, effectiveReach + 4)
 end
 
 local function createMobileUI()
@@ -332,14 +310,21 @@ local function tryLocalHit(screenPos)
         return
     end
 
-    local targetCharacter = getAimTargetCharacter(screenPos)
+    local swordTier = getEquippedSwordTier(character)
+    local targetCharacter = getBestTargetCharacter(character, swordTier, screenPos)
     if not targetCharacter then
         return
     end
 
-    local swordTier = getEquippedSwordTier(character)
     if SwordReach.canHit(character, targetCharacter, swordTier) then
-        print("Hit! sword:", swordTier, "reach:", SwordReach.getReach(swordTier), "target:", targetCharacter.Name)
+        local aRoot = character:FindFirstChild("HumanoidRootPart")
+        local tRoot = targetCharacter:FindFirstChild("HumanoidRootPart")
+        local d = 0
+        if aRoot and tRoot then
+            d = (aRoot.Position - tRoot.Position).Magnitude
+        end
+
+        print("Hit! sword:", swordTier, "reach:", SwordReach.getReach(swordTier), "distance:", math.floor(d * 100) / 100, "target:", targetCharacter.Name)
     else
         print("Out of range")
     end
