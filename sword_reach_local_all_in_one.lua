@@ -18,13 +18,15 @@ local SwordReach = {
     },
     Default = 14,
     BonusMin = 0,
-    BonusMax = 160,
-    GlobalBonus = 80,
+    BonusMax = 200,
+    GlobalBonus = 100,
+    ReachScale = 3, -- 実効リーチを強く反映
     Enabled = true,
     ShowHitboxes = true,
 }
 
 local hitboxBoxes = {}
+local currentTargetHighlight
 
 local function getModelRootPart(model)
     if not model then return nil end
@@ -37,7 +39,8 @@ end
 
 function SwordReach.getReach(swordName)
     local base = SwordReach.BaseValues[swordName] or SwordReach.Default
-    return base + math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax)
+    local bonus = math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax)
+    return base + (bonus * SwordReach.ReachScale)
 end
 
 function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
@@ -48,7 +51,7 @@ function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
     if not attackerRoot or not targetRoot then return false end
 
     local distance = (attackerRoot.Position - targetRoot.Position).Magnitude
-    local padding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.3
+    local padding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.35
     return distance <= (SwordReach.getReach(swordName) + padding), distance
 end
 
@@ -74,11 +77,34 @@ local function flashTarget(model)
     local h = Instance.new("Highlight")
     h.FillColor = Color3.fromRGB(255, 70, 70)
     h.OutlineColor = Color3.fromRGB(255, 255, 255)
-    h.FillTransparency = 0.35
+    h.FillTransparency = 0.3
     h.OutlineTransparency = 0
     h.Adornee = model
     h.Parent = Workspace
-    Debris:AddItem(h, 0.18)
+    Debris:AddItem(h, 0.2)
+end
+
+local function setCurrentTargetRed(model)
+    if model == nil then
+        if currentTargetHighlight then
+            currentTargetHighlight:Destroy()
+            currentTargetHighlight = nil
+        end
+        return
+    end
+
+    if not currentTargetHighlight then
+        currentTargetHighlight = Instance.new("Highlight")
+        currentTargetHighlight.Name = "CurrentTargetRed"
+        currentTargetHighlight.FillColor = Color3.fromRGB(255, 40, 40)
+        currentTargetHighlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+        currentTargetHighlight.FillTransparency = 0.55
+        currentTargetHighlight.OutlineTransparency = 0
+        currentTargetHighlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+        currentTargetHighlight.Parent = Workspace
+    end
+
+    currentTargetHighlight.Adornee = model
 end
 
 local function setHitboxVisible(model, visible)
@@ -121,7 +147,7 @@ local function refreshHitboxes()
     if not attackerRoot then return end
 
     local swordTier = getEquippedSwordTier(character)
-    local reach = SwordReach.getReach(swordTier) + 20
+    local reach = SwordReach.getReach(swordTier) + 30
 
     local seen = {}
     for _, obj in ipairs(Workspace:GetDescendants()) do
@@ -180,7 +206,7 @@ local function createUI()
     gui.Parent = localPlayer:WaitForChild("PlayerGui")
 
     local panel = Instance.new("Frame")
-    panel.Size = UDim2.fromOffset(250, 158)
+    panel.Size = UDim2.fromOffset(260, 170)
     panel.AnchorPoint = Vector2.new(1, 1)
     panel.Position = UDim2.new(1, -12, 1, -12)
     panel.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
@@ -228,9 +254,17 @@ local function createUI()
     bonusText.TextColor3 = Color3.fromRGB(230, 230, 230)
     bonusText.Parent = panel
 
+    local effectiveText = Instance.new("TextLabel")
+    effectiveText.Size = UDim2.new(1, -12, 0, 20)
+    effectiveText.Position = UDim2.fromOffset(6, 88)
+    effectiveText.BackgroundTransparency = 1
+    effectiveText.TextXAlignment = Enum.TextXAlignment.Left
+    effectiveText.TextColor3 = Color3.fromRGB(255, 180, 90)
+    effectiveText.Parent = panel
+
     local sliderBar = Instance.new("Frame")
     sliderBar.Size = UDim2.new(1, -16, 0, 10)
-    sliderBar.Position = UDim2.fromOffset(8, 100)
+    sliderBar.Position = UDim2.fromOffset(8, 112)
     sliderBar.BackgroundColor3 = Color3.fromRGB(65, 65, 70)
     sliderBar.BorderSizePixel = 0
     sliderBar.Parent = panel
@@ -242,15 +276,15 @@ local function createUI()
     sliderFill.Parent = sliderBar
 
     local infoText = Instance.new("TextLabel")
-    infoText.Size = UDim2.new(1, -12, 0, 34)
-    infoText.Position = UDim2.fromOffset(6, 116)
+    infoText.Size = UDim2.new(1, -12, 0, 38)
+    infoText.Position = UDim2.fromOffset(6, 126)
     infoText.BackgroundTransparency = 1
     infoText.TextXAlignment = Enum.TextXAlignment.Left
     infoText.TextYAlignment = Enum.TextYAlignment.Top
     infoText.TextColor3 = Color3.fromRGB(180, 180, 190)
     infoText.TextSize = 12
     infoText.TextWrapped = true
-    infoText.Text = "クリック/タップで最も近い対象に判定"
+    infoText.Text = "対象は赤色ハイライト。Hitbox表示も切替可能"
     infoText.Parent = panel
 
     local showUIButton = Instance.new("TextButton")
@@ -264,6 +298,9 @@ local function createUI()
     showUIButton.Parent = gui
 
     local function refresh()
+        local character = localPlayer.Character
+        local tier = character and getEquippedSwordTier(character) or "Wood"
+
         toggleButton.Text = SwordReach.Enabled and "ON" or "OFF"
         toggleButton.BackgroundColor3 = SwordReach.Enabled and Color3.fromRGB(70, 140, 70) or Color3.fromRGB(150, 60, 60)
         hitboxButton.Text = SwordReach.ShowHitboxes and "Hitbox: ON" or "Hitbox: OFF"
@@ -273,6 +310,7 @@ local function createUI()
         local fill = (SwordReach.GlobalBonus - SwordReach.BonusMin) / range
         sliderFill.Size = UDim2.new(math.clamp(fill, 0, 1), 0, 1, 0)
         bonusText.Text = "Bonus: +" .. tostring(SwordReach.GlobalBonus)
+        effectiveText.Text = "Effective Reach(" .. tier .. "): " .. tostring(SwordReach.getReach(tier))
     end
 
     local function setBonusFromX(x)
@@ -319,6 +357,13 @@ local function createUI()
     end)
 
     refresh()
+
+    task.spawn(function()
+        while gui.Parent do
+            refresh()
+            task.wait(0.25)
+        end
+    end)
 end
 
 createUI()
@@ -331,18 +376,27 @@ task.spawn(function()
 end)
 
 local function tryLocalHit()
-    if not SwordReach.Enabled then return end
+    if not SwordReach.Enabled then
+        setCurrentTargetRed(nil)
+        return
+    end
 
     local character = localPlayer.Character
-    if not character then return end
+    if not character then
+        setCurrentTargetRed(nil)
+        return
+    end
 
     local swordTier = getEquippedSwordTier(character)
     local targetCharacter, dist = getNearestTargetInReach(character, swordTier)
 
     if not targetCharacter then
+        setCurrentTargetRed(nil)
         print("No target in reach", "reach:", SwordReach.getReach(swordTier))
         return
     end
+
+    setCurrentTargetRed(targetCharacter)
 
     local ok, calcDist = SwordReach.canHit(character, targetCharacter, swordTier)
     if ok then
@@ -360,4 +414,3 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
         tryLocalHit()
     end
 end)
-
