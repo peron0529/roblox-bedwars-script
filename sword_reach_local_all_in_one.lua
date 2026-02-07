@@ -11,10 +11,10 @@ local localPlayer = Players.LocalPlayer
 local SwordReach = {
     BaseValues = {
         Wood = 14,
-        Stone = 15,
-        Iron = 16,
-        Diamond = 17,
-        Emerald = 18,
+        Stone = 14,
+        Iron = 14,
+        Diamond = 14,
+        Emerald = 14,
     },
     Default = 14,
     BonusMin = 0,
@@ -66,6 +66,20 @@ local function getVirtualTargetRadius(attackerRoot, targetRoot)
     local basePadding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.15
     local expanded = rawBonus * SwordReach.HitboxExpandScale * 0.5
     return basePadding + expanded
+end
+
+local function getForwardSearchBox(attackerRoot, swordTier)
+    local reach = SwordReach.getReach(swordTier)
+    local bonus = math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax)
+    local depth = reach + (bonus * SwordReach.HitboxExpandScale)
+
+    local width = 8 + (bonus * 0.05)
+    local height = 10 + (bonus * 0.04)
+
+    local center = attackerRoot.Position + attackerRoot.CFrame.LookVector * (depth * 0.5)
+    local boxCf = CFrame.lookAt(center, center + attackerRoot.CFrame.LookVector)
+    local boxSize = Vector3.new(width, height, depth)
+    return boxCf, boxSize
 end
 
 function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
@@ -155,7 +169,7 @@ local function setPreviewHitboxVisible(model, visible)
             previewBoxes[model] = box
         end
 
-        local virtualGrow = math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax) * 0.08
+        local virtualGrow = math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax) * 0.12
         box.Adornee = root
         box.Size = root.Size + Vector3.new(virtualGrow, virtualGrow, virtualGrow)
     elseif box then
@@ -168,14 +182,13 @@ local function getNearestTargetInReach(attackerCharacter, swordTier)
     local attackerRoot = getModelRootPart(attackerCharacter)
     if not attackerRoot then return nil, math.huge, math.huge end
 
-    local maxReach = SwordReach.getReach(swordTier)
-        + math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax) * SwordReach.HitboxExpandScale
+    local boxCf, boxSize = getForwardSearchBox(attackerRoot, swordTier)
 
     local overlap = OverlapParams.new()
     overlap.FilterType = Enum.RaycastFilterType.Exclude
     overlap.FilterDescendantsInstances = { attackerCharacter }
 
-    local nearbyParts = Workspace:GetPartBoundsInRadius(attackerRoot.Position, maxReach, overlap)
+    local nearbyParts = Workspace:GetPartBoundsInBox(boxCf, boxSize, overlap)
     local nearestModel, nearestDist, nearestThreshold = nil, math.huge, 0
     local seenModels = {}
 
