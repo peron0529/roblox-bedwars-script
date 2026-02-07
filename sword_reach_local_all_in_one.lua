@@ -29,6 +29,17 @@ local SwordReach = {
 local previewBoxes = {}
 local currentTargetHighlight
 
+local function getCharacterModelFromInstance(instance)
+    local current = instance
+    while current and current ~= Workspace do
+        if current:IsA("Model") and current:FindFirstChildOfClass("Humanoid") then
+            return current
+        end
+        current = current.Parent
+    end
+    return nil
+end
+
 local function getModelRootPart(model)
     if not model then return nil end
     return model:FindFirstChild("HumanoidRootPart")
@@ -52,8 +63,8 @@ end
 
 local function getVirtualTargetRadius(attackerRoot, targetRoot)
     local rawBonus = math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax)
-    local basePadding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.35
-    local expanded = rawBonus * SwordReach.HitboxExpandScale
+    local basePadding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.15
+    local expanded = rawBonus * SwordReach.HitboxExpandScale * 0.5
     return basePadding + expanded
 end
 
@@ -65,8 +76,10 @@ function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
     if not attackerRoot or not targetRoot then return false end
 
     local centerDist = (attackerRoot.Position - targetRoot.Position).Magnitude
+    local edgePadding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.5
+    local edgeDist = math.max(centerDist - edgePadding, 0)
     local threshold = SwordReach.getReach(swordName) + getVirtualTargetRadius(attackerRoot, targetRoot)
-    return centerDist <= threshold, centerDist, threshold
+    return edgeDist <= threshold, edgeDist, threshold
 end
 
 local function resolveSwordTier(toolName)
@@ -155,12 +168,23 @@ local function getNearestTargetInReach(attackerCharacter, swordTier)
     local attackerRoot = getModelRootPart(attackerCharacter)
     if not attackerRoot then return nil, math.huge, math.huge end
 
-    local nearestModel, nearestDist, nearestThreshold = nil, math.huge, 0
+    local maxReach = SwordReach.getReach(swordTier)
+        + math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax) * SwordReach.HitboxExpandScale
 
-    for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Humanoid") and obj.Health > 0 then
-            local model = obj.Parent
-            if model and not isOwnCharacter(model) then
+    local overlap = OverlapParams.new()
+    overlap.FilterType = Enum.RaycastFilterType.Exclude
+    overlap.FilterDescendantsInstances = { attackerCharacter }
+
+    local nearbyParts = Workspace:GetPartBoundsInRadius(attackerRoot.Position, maxReach, overlap)
+    local nearestModel, nearestDist, nearestThreshold = nil, math.huge, 0
+    local seenModels = {}
+
+    for _, part in ipairs(nearbyParts) do
+        local model = getCharacterModelFromInstance(part)
+        if model and not seenModels[model] and not isOwnCharacter(model) then
+            seenModels[model] = true
+            local humanoid = model:FindFirstChildOfClass("Humanoid")
+            if humanoid and humanoid.Health > 0 then
                 local ok, dist, threshold = SwordReach.canHit(attackerCharacter, model, swordTier)
                 if ok and dist < nearestDist then
                     nearestModel = model
