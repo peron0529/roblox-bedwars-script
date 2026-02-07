@@ -1,18 +1,19 @@
 -- LocalScript 1本で完結するソードリーチ判定（BedWars風）
 -- 例: StarterPlayerScripts に配置
 -- 追加機能:
--- 1) NPCへの適用（ターゲットがNPCでも判定）
--- 2) リーチ増加量をスライダーで調整
+-- 1) NPC/プレイヤー両対応
+-- 2) リーチ増加量スライダー
 -- 3) モバイル向けタップON/OFF
+-- 4) GUIを隠す/再表示するボタン
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
+local Workspace = game:GetService("Workspace")
 
 local localPlayer = Players.LocalPlayer
-local mouse = localPlayer:GetMouse()
+local camera = Workspace.CurrentCamera
 
 local SwordReach = {
-    -- BedWars系の剣ティア
     BaseValues = {
         Wood = 14,
         Stone = 15,
@@ -84,6 +85,59 @@ local function getEquippedSwordTier(character)
     return "Wood"
 end
 
+local function getCharacterFromPart(part)
+    if not part then
+        return nil
+    end
+
+    local model = part:FindFirstAncestorOfClass("Model")
+    if not model then
+        return nil
+    end
+
+    local hum = model:FindFirstChildOfClass("Humanoid")
+    if not hum then
+        return nil
+    end
+
+    return model
+end
+
+local function getAimTargetCharacter(screenPos)
+    local character = localPlayer.Character
+    if not character then
+        return nil
+    end
+
+    if not camera then
+        camera = Workspace.CurrentCamera
+    end
+    if not camera then
+        return nil
+    end
+
+    local viewportPoint
+    if screenPos then
+        viewportPoint = Vector2.new(screenPos.X, screenPos.Y)
+    else
+        local mouseLocation = UserInputService:GetMouseLocation()
+        viewportPoint = Vector2.new(mouseLocation.X, mouseLocation.Y)
+    end
+
+    local ray = camera:ViewportPointToRay(viewportPoint.X, viewportPoint.Y)
+    local params = RaycastParams.new()
+    params.FilterType = Enum.RaycastFilterType.Exclude
+    params.FilterDescendantsInstances = { character }
+    params.IgnoreWater = true
+
+    local result = Workspace:Raycast(ray.Origin, ray.Direction * 500, params)
+    if not result then
+        return nil
+    end
+
+    return getCharacterFromPart(result.Instance)
+end
+
 local function createMobileUI()
     local gui = Instance.new("ScreenGui")
     gui.Name = "ReachControlGui"
@@ -91,20 +145,29 @@ local function createMobileUI()
     gui.Parent = localPlayer:WaitForChild("PlayerGui")
 
     local panel = Instance.new("Frame")
-    panel.Size = UDim2.fromOffset(230, 120)
-    panel.Position = UDim2.new(0, 12, 1, -132)
+    panel.Name = "Panel"
+    panel.Size = UDim2.fromOffset(230, 128)
+    panel.Position = UDim2.new(0, 12, 1, -140)
     panel.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
     panel.BorderSizePixel = 0
     panel.Parent = gui
 
     local title = Instance.new("TextLabel")
-    title.Size = UDim2.new(1, -12, 0, 24)
+    title.Size = UDim2.new(1, -60, 0, 24)
     title.Position = UDim2.fromOffset(6, 4)
     title.BackgroundTransparency = 1
     title.TextXAlignment = Enum.TextXAlignment.Left
     title.TextColor3 = Color3.fromRGB(255, 255, 255)
-    title.Text = "Sword Reach Control"
+    title.Text = "Sword Reach"
     title.Parent = panel
+
+    local hideButton = Instance.new("TextButton")
+    hideButton.Size = UDim2.fromOffset(46, 22)
+    hideButton.Position = UDim2.new(1, -52, 0, 5)
+    hideButton.BackgroundColor3 = Color3.fromRGB(80, 80, 90)
+    hideButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hideButton.Text = "Hide"
+    hideButton.Parent = panel
 
     local toggleButton = Instance.new("TextButton")
     toggleButton.Size = UDim2.fromOffset(90, 28)
@@ -116,7 +179,7 @@ local function createMobileUI()
 
     local bonusText = Instance.new("TextLabel")
     bonusText.Size = UDim2.new(1, -12, 0, 20)
-    bonusText.Position = UDim2.fromOffset(6, 66)
+    bonusText.Position = UDim2.fromOffset(6, 70)
     bonusText.BackgroundTransparency = 1
     bonusText.TextXAlignment = Enum.TextXAlignment.Left
     bonusText.TextColor3 = Color3.fromRGB(230, 230, 230)
@@ -125,7 +188,7 @@ local function createMobileUI()
 
     local sliderBar = Instance.new("Frame")
     sliderBar.Size = UDim2.new(1, -16, 0, 10)
-    sliderBar.Position = UDim2.fromOffset(8, 94)
+    sliderBar.Position = UDim2.fromOffset(8, 100)
     sliderBar.BackgroundColor3 = Color3.fromRGB(65, 65, 70)
     sliderBar.BorderSizePixel = 0
     sliderBar.Parent = panel
@@ -135,6 +198,15 @@ local function createMobileUI()
     sliderFill.BackgroundColor3 = Color3.fromRGB(60, 170, 255)
     sliderFill.BorderSizePixel = 0
     sliderFill.Parent = sliderBar
+
+    local showUIButton = Instance.new("TextButton")
+    showUIButton.Size = UDim2.fromOffset(52, 28)
+    showUIButton.Position = UDim2.new(0, 12, 1, -40)
+    showUIButton.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
+    showUIButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    showUIButton.Text = "UI"
+    showUIButton.Visible = false
+    showUIButton.Parent = gui
 
     local function refreshToggleVisual()
         if SwordReach.Enabled then
@@ -146,21 +218,36 @@ local function createMobileUI()
         end
     end
 
+    local function refreshSliderVisual()
+        local range = math.max(SwordReach.BonusMax - SwordReach.BonusMin, 1)
+        local fillAlpha = (SwordReach.GlobalBonus - SwordReach.BonusMin) / range
+        sliderFill.Size = UDim2.new(math.clamp(fillAlpha, 0, 1), 0, 1, 0)
+        bonusText.Text = "Bonus: +" .. tostring(SwordReach.GlobalBonus)
+    end
+
     local function setBonusFromX(x)
         local left = sliderBar.AbsolutePosition.X
         local width = math.max(sliderBar.AbsoluteSize.X, 1)
         local alpha = math.clamp((x - left) / width, 0, 1)
+
         local rawBonus = SwordReach.BonusMin + (SwordReach.BonusMax - SwordReach.BonusMin) * alpha
         SwordReach.GlobalBonus = math.floor(rawBonus + 0.5)
-
-        local fillAlpha = (SwordReach.GlobalBonus - SwordReach.BonusMin) / (SwordReach.BonusMax - SwordReach.BonusMin)
-        sliderFill.Size = UDim2.new(fillAlpha, 0, 1, 0)
-        bonusText.Text = "Bonus: +" .. tostring(SwordReach.GlobalBonus)
+        refreshSliderVisual()
     end
 
     toggleButton.Activated:Connect(function()
         SwordReach.Enabled = not SwordReach.Enabled
         refreshToggleVisual()
+    end)
+
+    hideButton.Activated:Connect(function()
+        panel.Visible = false
+        showUIButton.Visible = true
+    end)
+
+    showUIButton.Activated:Connect(function()
+        panel.Visible = true
+        showUIButton.Visible = false
     end)
 
     sliderBar.InputBegan:Connect(function(input)
@@ -177,27 +264,13 @@ local function createMobileUI()
         end
     end)
 
-    setBonusFromX(sliderBar.AbsolutePosition.X + sliderBar.AbsoluteSize.X * ((SwordReach.GlobalBonus - SwordReach.BonusMin) / (SwordReach.BonusMax - SwordReach.BonusMin)))
     refreshToggleVisual()
+    refreshSliderVisual()
 end
 
 createMobileUI()
 
-local function getCharacterFromTargetPart(targetPart)
-    local targetModel = targetPart:FindFirstAncestorOfClass("Model")
-    if not targetModel then
-        return nil
-    end
-
-    local humanoid = targetModel:FindFirstChildOfClass("Humanoid")
-    if not humanoid then
-        return nil
-    end
-
-    return targetModel
-end
-
-local function tryLocalHit()
+local function tryLocalHit(screenPos)
     if not SwordReach.Enabled then
         return
     end
@@ -207,19 +280,12 @@ local function tryLocalHit()
         return
     end
 
-    local targetPart = mouse.Target
-    if not targetPart then
-        return
-    end
-
-    local targetCharacter = getCharacterFromTargetPart(targetPart)
+    local targetCharacter = getAimTargetCharacter(screenPos)
     if not targetCharacter then
         return
     end
 
     local swordTier = getEquippedSwordTier(character)
-
-    -- プレイヤー・NPCどちらにも同じ判定を適用
     if SwordReach.canHit(character, targetCharacter, swordTier) then
         print("Hit! sword:", swordTier, "reach:", SwordReach.getReach(swordTier), "target:", targetCharacter.Name)
     else
@@ -233,11 +299,8 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
     end
 
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        tryLocalHit()
-    end
-
-    -- モバイルの画面タップでも判定
-    if input.UserInputType == Enum.UserInputType.Touch then
-        tryLocalHit()
+        tryLocalHit(nil)
+    elseif input.UserInputType == Enum.UserInputType.Touch then
+        tryLocalHit(input.Position)
     end
 end)
