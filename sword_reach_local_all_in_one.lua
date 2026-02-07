@@ -22,9 +22,10 @@ local SwordReach = {
         Emerald = 18,
     },
     Default = 14,
+    -- 「伸びてるのが分かる」ように初期値と上限を強化
     BonusMin = 0,
-    BonusMax = 10,
-    GlobalBonus = 4,
+    BonusMax = 30,
+    GlobalBonus = 12,
     Enabled = true,
 }
 
@@ -39,8 +40,12 @@ function SwordReach.canHitFromParts(attackerPart, targetPart, swordName)
         return false
     end
 
-    local distance = (attackerPart.Position - targetPart.Position).Magnitude
-    return distance <= SwordReach.getReach(swordName)
+    local centerDistance = (attackerPart.Position - targetPart.Position).Magnitude
+    local reach = SwordReach.getReach(swordName)
+
+    -- 中心点同士だと短く感じるので、当たり判定の厚みを少し加算
+    local partPadding = (attackerPart.Size.Magnitude + targetPart.Size.Magnitude) * 0.15
+    return centerDistance <= (reach + partPadding)
 end
 
 function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
@@ -147,7 +152,9 @@ local function createMobileUI()
     local panel = Instance.new("Frame")
     panel.Name = "Panel"
     panel.Size = UDim2.fromOffset(230, 128)
-    panel.Position = UDim2.new(0, 12, 1, -140)
+    -- 右下に固定
+    panel.AnchorPoint = Vector2.new(1, 1)
+    panel.Position = UDim2.new(1, -12, 1, -12)
     panel.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
     panel.BorderSizePixel = 0
     panel.Parent = gui
@@ -201,7 +208,9 @@ local function createMobileUI()
 
     local showUIButton = Instance.new("TextButton")
     showUIButton.Size = UDim2.fromOffset(52, 28)
-    showUIButton.Position = UDim2.new(0, 12, 1, -40)
+    -- 右下にUI復帰ボタン
+    showUIButton.AnchorPoint = Vector2.new(1, 1)
+    showUIButton.Position = UDim2.new(1, -12, 1, -12)
     showUIButton.BackgroundColor3 = Color3.fromRGB(45, 45, 50)
     showUIButton.TextColor3 = Color3.fromRGB(255, 255, 255)
     showUIButton.Text = "UI"
