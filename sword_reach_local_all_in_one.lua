@@ -1,6 +1,5 @@
 -- LocalScript 1本で完結するソードリーチ判定（BedWars風）
 -- 例: StarterPlayerScripts に配置
--- NOTE: ローカル判定なので、実ダメージをサーバーで通す場合は別途Remote連携が必要です。
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
@@ -19,10 +18,13 @@ local SwordReach = {
     },
     Default = 14,
     BonusMin = 0,
-    BonusMax = 120,
-    GlobalBonus = 60,
+    BonusMax = 160,
+    GlobalBonus = 80,
     Enabled = true,
+    ShowHitboxes = true,
 }
+
+local hitboxBoxes = {}
 
 local function getModelRootPart(model)
     if not model then return nil end
@@ -40,12 +42,13 @@ end
 
 function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
     if not SwordReach.Enabled then return false end
+
     local attackerRoot = getModelRootPart(attackerCharacter)
     local targetRoot = getModelRootPart(targetCharacter)
     if not attackerRoot or not targetRoot then return false end
 
     local distance = (attackerRoot.Position - targetRoot.Position).Magnitude
-    local padding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.25
+    local padding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.3
     return distance <= (SwordReach.getReach(swordName) + padding), distance
 end
 
@@ -67,9 +70,86 @@ local function getEquippedSwordTier(character)
     return "Wood"
 end
 
+local function flashTarget(model)
+    local h = Instance.new("Highlight")
+    h.FillColor = Color3.fromRGB(255, 70, 70)
+    h.OutlineColor = Color3.fromRGB(255, 255, 255)
+    h.FillTransparency = 0.35
+    h.OutlineTransparency = 0
+    h.Adornee = model
+    h.Parent = Workspace
+    Debris:AddItem(h, 0.18)
+end
+
+local function setHitboxVisible(model, visible)
+    local root = getModelRootPart(model)
+    if not root then return end
+
+    local box = hitboxBoxes[model]
+    if visible then
+        if not box then
+            box = Instance.new("BoxHandleAdornment")
+            box.Name = "ReachHitbox"
+            box.AlwaysOnTop = true
+            box.ZIndex = 5
+            box.Transparency = 0.72
+            box.Color3 = Color3.fromRGB(80, 190, 255)
+            box.Parent = Workspace
+            hitboxBoxes[model] = box
+        end
+
+        box.Adornee = root
+        box.Size = root.Size + Vector3.new(0.3, 0.3, 0.3)
+    elseif box then
+        box:Destroy()
+        hitboxBoxes[model] = nil
+    end
+end
+
+local function refreshHitboxes()
+    local character = localPlayer.Character
+    if not character then return end
+
+    if not SwordReach.ShowHitboxes then
+        for model, _ in pairs(hitboxBoxes) do
+            setHitboxVisible(model, false)
+        end
+        return
+    end
+
+    local attackerRoot = getModelRootPart(character)
+    if not attackerRoot then return end
+
+    local swordTier = getEquippedSwordTier(character)
+    local reach = SwordReach.getReach(swordTier) + 20
+
+    local seen = {}
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Humanoid") and obj.Health > 0 then
+            local model = obj.Parent
+            if model and model ~= character then
+                local root = getModelRootPart(model)
+                if root then
+                    local dist = (root.Position - attackerRoot.Position).Magnitude
+                    if dist <= reach then
+                        seen[model] = true
+                        setHitboxVisible(model, true)
+                    end
+                end
+            end
+        end
+    end
+
+    for model, _ in pairs(hitboxBoxes) do
+        if not seen[model] then
+            setHitboxVisible(model, false)
+        end
+    end
+end
+
 local function getNearestTargetInReach(attackerCharacter, swordTier)
     local attackerRoot = getModelRootPart(attackerCharacter)
-    if not attackerRoot then return nil end
+    if not attackerRoot then return nil, math.huge end
 
     local reach = SwordReach.getReach(swordTier)
     local nearest, nearestDist = nil, math.huge
@@ -78,9 +158,9 @@ local function getNearestTargetInReach(attackerCharacter, swordTier)
         if obj:IsA("Humanoid") and obj.Health > 0 then
             local model = obj.Parent
             if model and model ~= attackerCharacter then
-                local targetRoot = getModelRootPart(model)
-                if targetRoot then
-                    local dist = (targetRoot.Position - attackerRoot.Position).Magnitude
+                local root = getModelRootPart(model)
+                if root then
+                    local dist = (root.Position - attackerRoot.Position).Magnitude
                     if dist <= reach and dist < nearestDist then
                         nearest = model
                         nearestDist = dist
@@ -93,17 +173,6 @@ local function getNearestTargetInReach(attackerCharacter, swordTier)
     return nearest, nearestDist
 end
 
-local function flashTarget(model)
-    local h = Instance.new("Highlight")
-    h.FillColor = Color3.fromRGB(255, 70, 70)
-    h.OutlineColor = Color3.fromRGB(255, 255, 255)
-    h.FillTransparency = 0.35
-    h.OutlineTransparency = 0
-    h.Adornee = model
-    h.Parent = Workspace
-    Debris:AddItem(h, 0.15)
-end
-
 local function createUI()
     local gui = Instance.new("ScreenGui")
     gui.Name = "ReachControlGui"
@@ -111,7 +180,7 @@ local function createUI()
     gui.Parent = localPlayer:WaitForChild("PlayerGui")
 
     local panel = Instance.new("Frame")
-    panel.Size = UDim2.fromOffset(230, 128)
+    panel.Size = UDim2.fromOffset(250, 158)
     panel.AnchorPoint = Vector2.new(1, 1)
     panel.Position = UDim2.new(1, -12, 1, -12)
     panel.BackgroundColor3 = Color3.fromRGB(30, 30, 35)
@@ -143,6 +212,14 @@ local function createUI()
     toggleButton.Text = "ON"
     toggleButton.Parent = panel
 
+    local hitboxButton = Instance.new("TextButton")
+    hitboxButton.Size = UDim2.fromOffset(120, 28)
+    hitboxButton.Position = UDim2.fromOffset(106, 34)
+    hitboxButton.BackgroundColor3 = Color3.fromRGB(60, 90, 140)
+    hitboxButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+    hitboxButton.Text = "Hitbox: ON"
+    hitboxButton.Parent = panel
+
     local bonusText = Instance.new("TextLabel")
     bonusText.Size = UDim2.new(1, -12, 0, 20)
     bonusText.Position = UDim2.fromOffset(6, 70)
@@ -164,6 +241,18 @@ local function createUI()
     sliderFill.BorderSizePixel = 0
     sliderFill.Parent = sliderBar
 
+    local infoText = Instance.new("TextLabel")
+    infoText.Size = UDim2.new(1, -12, 0, 34)
+    infoText.Position = UDim2.fromOffset(6, 116)
+    infoText.BackgroundTransparency = 1
+    infoText.TextXAlignment = Enum.TextXAlignment.Left
+    infoText.TextYAlignment = Enum.TextYAlignment.Top
+    infoText.TextColor3 = Color3.fromRGB(180, 180, 190)
+    infoText.TextSize = 12
+    infoText.TextWrapped = true
+    infoText.Text = "クリック/タップで最も近い対象に判定"
+    infoText.Parent = panel
+
     local showUIButton = Instance.new("TextButton")
     showUIButton.Size = UDim2.fromOffset(52, 28)
     showUIButton.AnchorPoint = Vector2.new(1, 1)
@@ -177,6 +266,9 @@ local function createUI()
     local function refresh()
         toggleButton.Text = SwordReach.Enabled and "ON" or "OFF"
         toggleButton.BackgroundColor3 = SwordReach.Enabled and Color3.fromRGB(70, 140, 70) or Color3.fromRGB(150, 60, 60)
+        hitboxButton.Text = SwordReach.ShowHitboxes and "Hitbox: ON" or "Hitbox: OFF"
+        hitboxButton.BackgroundColor3 = SwordReach.ShowHitboxes and Color3.fromRGB(60, 90, 140) or Color3.fromRGB(100, 70, 70)
+
         local range = math.max(SwordReach.BonusMax - SwordReach.BonusMin, 1)
         local fill = (SwordReach.GlobalBonus - SwordReach.BonusMin) / range
         sliderFill.Size = UDim2.new(math.clamp(fill, 0, 1), 0, 1, 0)
@@ -196,10 +288,17 @@ local function createUI()
         SwordReach.Enabled = not SwordReach.Enabled
         refresh()
     end)
+
+    hitboxButton.Activated:Connect(function()
+        SwordReach.ShowHitboxes = not SwordReach.ShowHitboxes
+        refresh()
+    end)
+
     hideButton.Activated:Connect(function()
         panel.Visible = false
         showUIButton.Visible = true
     end)
+
     showUIButton.Activated:Connect(function()
         panel.Visible = true
         showUIButton.Visible = false
@@ -210,6 +309,7 @@ local function createUI()
             setBonusFromX(input.Position.X)
         end
     end)
+
     sliderBar.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
             if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or input.UserInputState == Enum.UserInputState.Change then
@@ -223,8 +323,16 @@ end
 
 createUI()
 
+task.spawn(function()
+    while true do
+        refreshHitboxes()
+        task.wait(0.2)
+    end
+end)
+
 local function tryLocalHit()
     if not SwordReach.Enabled then return end
+
     local character = localPlayer.Character
     if not character then return end
 
@@ -236,13 +344,13 @@ local function tryLocalHit()
         return
     end
 
-    local ok = SwordReach.canHit(character, targetCharacter, swordTier)
+    local ok, calcDist = SwordReach.canHit(character, targetCharacter, swordTier)
     if ok then
         flashTarget(targetCharacter)
         local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
-        print("Hit!", targetPlayer and "Player" or "NPC", "reach:", SwordReach.getReach(swordTier), "distance:", math.floor((dist or 0) * 100) / 100, "target:", targetCharacter.Name)
+        print("Hit!", targetPlayer and "Player" or "NPC", "reach:", SwordReach.getReach(swordTier), "distance:", math.floor(((calcDist or dist or 0) * 100)) / 100, "target:", targetCharacter.Name)
     else
-        print("Out of range", "reach:", SwordReach.getReach(swordTier), "distance:", math.floor((dist or 0) * 100) / 100)
+        print("Out of range", "reach:", SwordReach.getReach(swordTier), "distance:", math.floor(((calcDist or dist or 0) * 100)) / 100)
     end
 end
 
@@ -252,3 +360,4 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
         tryLocalHit()
     end
 end)
+
