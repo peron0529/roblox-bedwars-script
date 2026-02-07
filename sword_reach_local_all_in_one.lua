@@ -1,9 +1,11 @@
 -- LocalScript 1本で完結するソードリーチ判定（BedWars風）
 -- 例: StarterPlayerScripts に配置
+-- NOTE: ローカル判定なので、実ダメージをサーバーで通す場合は別途Remote連携が必要です。
 
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
+local Debris = game:GetService("Debris")
 
 local localPlayer = Players.LocalPlayer
 
@@ -17,18 +19,13 @@ local SwordReach = {
     },
     Default = 14,
     BonusMin = 0,
-    BonusMax = 60,
-    GlobalBonus = 25,
+    BonusMax = 120,
+    GlobalBonus = 60,
     Enabled = true,
-    TargetingAngleMinDot = -1, -- -1で全方向許可（確実にリーチ効果を感じる設定）
-    ExtraAcquireRange = 8,
 }
 
 local function getModelRootPart(model)
-    if not model then
-        return nil
-    end
-
+    if not model then return nil end
     return model:FindFirstChild("HumanoidRootPart")
         or model.PrimaryPart
         or model:FindFirstChild("UpperTorso")
@@ -38,46 +35,26 @@ end
 
 function SwordReach.getReach(swordName)
     local base = SwordReach.BaseValues[swordName] or SwordReach.Default
-    local bonus = math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax)
-    return base + bonus
-end
-
-function SwordReach.canHitFromParts(attackerPart, targetPart, swordName)
-    if not attackerPart or not targetPart then
-        return false
-    end
-
-    local distance = (attackerPart.Position - targetPart.Position).Magnitude
-    local reach = SwordReach.getReach(swordName)
-    local partPadding = (attackerPart.Size.Magnitude + targetPart.Size.Magnitude) * 0.25
-    return distance <= (reach + partPadding)
+    return base + math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax)
 end
 
 function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
-    if not SwordReach.Enabled then
-        return false
-    end
-
+    if not SwordReach.Enabled then return false end
     local attackerRoot = getModelRootPart(attackerCharacter)
     local targetRoot = getModelRootPart(targetCharacter)
-    return SwordReach.canHitFromParts(attackerRoot, targetRoot, swordName)
+    if not attackerRoot or not targetRoot then return false end
+
+    local distance = (attackerRoot.Position - targetRoot.Position).Magnitude
+    local padding = (attackerRoot.Size.Magnitude + targetRoot.Size.Magnitude) * 0.25
+    return distance <= (SwordReach.getReach(swordName) + padding), distance
 end
 
 local function resolveSwordTier(toolName)
-    if not toolName then
-        return "Wood"
-    end
-
-    local n = string.lower(toolName)
-    if string.find(n, "emerald") then
-        return "Emerald"
-    elseif string.find(n, "diamond") then
-        return "Diamond"
-    elseif string.find(n, "iron") then
-        return "Iron"
-    elseif string.find(n, "stone") then
-        return "Stone"
-    end
+    local n = string.lower(toolName or "")
+    if string.find(n, "emerald") then return "Emerald" end
+    if string.find(n, "diamond") then return "Diamond" end
+    if string.find(n, "iron") then return "Iron" end
+    if string.find(n, "stone") then return "Stone" end
     return "Wood"
 end
 
@@ -90,42 +67,44 @@ local function getEquippedSwordTier(character)
     return "Wood"
 end
 
-local function getNearestReachableTarget(attackerCharacter, swordTier)
+local function getNearestTargetInReach(attackerCharacter, swordTier)
     local attackerRoot = getModelRootPart(attackerCharacter)
-    if not attackerRoot then
-        return nil, math.huge
-    end
+    if not attackerRoot then return nil end
 
-    local reach = SwordReach.getReach(swordTier) + SwordReach.ExtraAcquireRange
-    local nearestModel = nil
-    local nearestDistance = math.huge
-    local forward = attackerRoot.CFrame.LookVector
+    local reach = SwordReach.getReach(swordTier)
+    local nearest, nearestDist = nil, math.huge
 
     for _, obj in ipairs(Workspace:GetDescendants()) do
         if obj:IsA("Humanoid") and obj.Health > 0 then
             local model = obj.Parent
             if model and model ~= attackerCharacter then
-                local root = getModelRootPart(model)
-                if root then
-                    local offset = root.Position - attackerRoot.Position
-                    local distance = offset.Magnitude
-                    if distance <= reach then
-                        local dir = (distance > 0) and offset.Unit or forward
-                        local dot = forward:Dot(dir)
-                        if dot >= SwordReach.TargetingAngleMinDot and distance < nearestDistance then
-                            nearestDistance = distance
-                            nearestModel = model
-                        end
+                local targetRoot = getModelRootPart(model)
+                if targetRoot then
+                    local dist = (targetRoot.Position - attackerRoot.Position).Magnitude
+                    if dist <= reach and dist < nearestDist then
+                        nearest = model
+                        nearestDist = dist
                     end
                 end
             end
         end
     end
 
-    return nearestModel, nearestDistance
+    return nearest, nearestDist
 end
 
-local function createMobileUI()
+local function flashTarget(model)
+    local h = Instance.new("Highlight")
+    h.FillColor = Color3.fromRGB(255, 70, 70)
+    h.OutlineColor = Color3.fromRGB(255, 255, 255)
+    h.FillTransparency = 0.35
+    h.OutlineTransparency = 0
+    h.Adornee = model
+    h.Parent = Workspace
+    Debris:AddItem(h, 0.15)
+end
+
+local function createUI()
     local gui = Instance.new("ScreenGui")
     gui.Name = "ReachControlGui"
     gui.ResetOnSpawn = false
@@ -195,17 +174,9 @@ local function createMobileUI()
     showUIButton.Visible = false
     showUIButton.Parent = gui
 
-    local function refreshToggle()
-        if SwordReach.Enabled then
-            toggleButton.Text = "ON"
-            toggleButton.BackgroundColor3 = Color3.fromRGB(70, 140, 70)
-        else
-            toggleButton.Text = "OFF"
-            toggleButton.BackgroundColor3 = Color3.fromRGB(150, 60, 60)
-        end
-    end
-
-    local function refreshSlider()
+    local function refresh()
+        toggleButton.Text = SwordReach.Enabled and "ON" or "OFF"
+        toggleButton.BackgroundColor3 = SwordReach.Enabled and Color3.fromRGB(70, 140, 70) or Color3.fromRGB(150, 60, 60)
         local range = math.max(SwordReach.BonusMax - SwordReach.BonusMin, 1)
         local fill = (SwordReach.GlobalBonus - SwordReach.BonusMin) / range
         sliderFill.Size = UDim2.new(math.clamp(fill, 0, 1), 0, 1, 0)
@@ -218,19 +189,17 @@ local function createMobileUI()
         local alpha = math.clamp((x - left) / width, 0, 1)
         local raw = SwordReach.BonusMin + (SwordReach.BonusMax - SwordReach.BonusMin) * alpha
         SwordReach.GlobalBonus = math.floor(raw + 0.5)
-        refreshSlider()
+        refresh()
     end
 
     toggleButton.Activated:Connect(function()
         SwordReach.Enabled = not SwordReach.Enabled
-        refreshToggle()
+        refresh()
     end)
-
     hideButton.Activated:Connect(function()
         panel.Visible = false
         showUIButton.Visible = true
     end)
-
     showUIButton.Activated:Connect(function()
         panel.Visible = true
         showUIButton.Visible = false
@@ -241,7 +210,6 @@ local function createMobileUI()
             setBonusFromX(input.Position.X)
         end
     end)
-
     sliderBar.InputChanged:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
             if UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or input.UserInputState == Enum.UserInputState.Change then
@@ -250,43 +218,36 @@ local function createMobileUI()
         end
     end)
 
-    refreshToggle()
-    refreshSlider()
+    refresh()
 end
 
-createMobileUI()
+createUI()
 
 local function tryLocalHit()
-    if not SwordReach.Enabled then
-        return
-    end
-
+    if not SwordReach.Enabled then return end
     local character = localPlayer.Character
-    if not character then
-        return
-    end
+    if not character then return end
 
     local swordTier = getEquippedSwordTier(character)
-    local targetCharacter, nearestDistance = getNearestReachableTarget(character, swordTier)
+    local targetCharacter, dist = getNearestTargetInReach(character, swordTier)
+
     if not targetCharacter then
         print("No target in reach", "reach:", SwordReach.getReach(swordTier))
         return
     end
 
-    if SwordReach.canHit(character, targetCharacter, swordTier) then
+    local ok = SwordReach.canHit(character, targetCharacter, swordTier)
+    if ok then
+        flashTarget(targetCharacter)
         local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
-        local targetType = targetPlayer and "Player" or "NPC"
-        print("Hit!", "type:", targetType, "sword:", swordTier, "reach:", SwordReach.getReach(swordTier), "distance:", math.floor(nearestDistance * 100) / 100, "target:", targetCharacter.Name)
+        print("Hit!", targetPlayer and "Player" or "NPC", "reach:", SwordReach.getReach(swordTier), "distance:", math.floor((dist or 0) * 100) / 100, "target:", targetCharacter.Name)
     else
-        print("Out of range", "reach:", SwordReach.getReach(swordTier), "distance:", math.floor(nearestDistance * 100) / 100)
+        print("Out of range", "reach:", SwordReach.getReach(swordTier), "distance:", math.floor((dist or 0) * 100) / 100)
     end
 end
 
 UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-    if gameProcessedEvent then
-        return
-    end
-
+    if gameProcessedEvent then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         tryLocalHit()
     end
