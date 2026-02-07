@@ -148,8 +148,8 @@ local function setCurrentTargetRed(model)
         currentTargetHighlight.Parent = Workspace
     end
 
-    -- モデル全体ではなくルートパーツへ付与（自分の剣が赤くなる問題を回避）
-    currentTargetHighlight.Adornee = root
+    -- 自キャラ除外済みなので、相手モデル全体を赤く表示
+    currentTargetHighlight.Adornee = model
 end
 
 local function setPreviewHitboxVisible(model, visible)
@@ -182,17 +182,21 @@ local function getNearestTargetInReach(attackerCharacter, swordTier)
     local attackerRoot = getModelRootPart(attackerCharacter)
     if not attackerRoot then return nil, math.huge, math.huge end
 
+    local bonus = math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax)
+    local radius = SwordReach.getReach(swordTier) + (bonus * SwordReach.HitboxExpandScale) + 12
     local boxCf, boxSize = getForwardSearchBox(attackerRoot, swordTier)
 
     local overlap = OverlapParams.new()
     overlap.FilterType = Enum.RaycastFilterType.Exclude
     overlap.FilterDescendantsInstances = { attackerCharacter }
 
-    local nearbyParts = Workspace:GetPartBoundsInBox(boxCf, boxSize, overlap)
+    local nearbyParts = Workspace:GetPartBoundsInRadius(attackerRoot.Position, radius, overlap)
+    local forwardParts = Workspace:GetPartBoundsInBox(boxCf, boxSize, overlap)
+
     local nearestModel, nearestDist, nearestThreshold = nil, math.huge, 0
     local seenModels = {}
 
-    for _, part in ipairs(nearbyParts) do
+    local function considerPart(part)
         local model = getCharacterModelFromInstance(part)
         if model and not seenModels[model] and not isOwnCharacter(model) then
             seenModels[model] = true
@@ -206,6 +210,14 @@ local function getNearestTargetInReach(attackerCharacter, swordTier)
                 end
             end
         end
+    end
+
+    for _, part in ipairs(forwardParts) do
+        considerPart(part)
+    end
+
+    for _, part in ipairs(nearbyParts) do
+        considerPart(part)
     end
 
     return nearestModel, nearestDist, nearestThreshold
@@ -419,6 +431,16 @@ createUI()
 task.spawn(function()
     while true do
         refreshHitboxes()
+
+        local character = localPlayer.Character
+        if SwordReach.Enabled and character then
+            local swordTier = getEquippedSwordTier(character)
+            local target = getNearestTargetInReach(character, swordTier)
+            setCurrentTargetRed(target)
+        else
+            setCurrentTargetRed(nil)
+        end
+
         task.wait(0.2)
     end
 end)
