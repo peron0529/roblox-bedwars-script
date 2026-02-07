@@ -23,6 +23,18 @@ local SwordReach = {
     Enabled = true,
 }
 
+local function getModelRootPart(model)
+    if not model then
+        return nil
+    end
+
+    return model:FindFirstChild("HumanoidRootPart")
+        or model.PrimaryPart
+        or model:FindFirstChild("UpperTorso")
+        or model:FindFirstChild("Torso")
+        or model:FindFirstChild("Head")
+end
+
 function SwordReach.getReach(swordName)
     local base = SwordReach.BaseValues[swordName] or SwordReach.Default
     local bonus = math.clamp(SwordReach.GlobalBonus, SwordReach.BonusMin, SwordReach.BonusMax)
@@ -49,8 +61,8 @@ function SwordReach.canHit(attackerCharacter, targetCharacter, swordName)
         return false
     end
 
-    local attackerRoot = attackerCharacter:FindFirstChild("HumanoidRootPart")
-    local targetRoot = targetCharacter:FindFirstChild("HumanoidRootPart")
+    local attackerRoot = getModelRootPart(attackerCharacter)
+    local targetRoot = getModelRootPart(targetCharacter)
     return SwordReach.canHitFromParts(attackerRoot, targetRoot, swordName)
 end
 
@@ -92,7 +104,7 @@ local function getValidTargetModelFromHumanoid(humanoid, attackerCharacter)
         return nil
     end
 
-    local root = model:FindFirstChild("HumanoidRootPart")
+    local root = getModelRootPart(model)
     if not root then
         return nil
     end
@@ -108,9 +120,8 @@ local function getPointerPosition(screenPos)
     return Vector2.new(mouseLocation.X, mouseLocation.Y)
 end
 
--- ここを距離ベースにして、リーチ増加の効果が必ず出るようにする
 local function getBestTargetCharacter(attackerCharacter, swordTier, screenPos)
-    local attackerRoot = attackerCharacter:FindFirstChild("HumanoidRootPart")
+    local attackerRoot = getModelRootPart(attackerCharacter)
     if not attackerRoot then
         return nil
     end
@@ -128,16 +139,14 @@ local function getBestTargetCharacter(attackerCharacter, swordTier, screenPos)
         if obj:IsA("Humanoid") then
             local model = getValidTargetModelFromHumanoid(obj, attackerCharacter)
             if model then
-                local targetRoot = model:FindFirstChild("HumanoidRootPart")
+                local targetRoot = getModelRootPart(model)
                 local worldDistance = (targetRoot.Position - attackerRoot.Position).Magnitude
 
-                -- リーチ内のみ対象にする（ここで伸びた分が直接効く）
                 if worldDistance <= (reach + 6) then
                     local forward = attackerRoot.CFrame.LookVector
                     local dir = (targetRoot.Position - attackerRoot.Position).Unit
                     local forwardDot = forward:Dot(dir)
 
-                    -- ある程度前方を優先
                     if forwardDot > -0.2 then
                         local screenPenalty = 0
 
@@ -151,7 +160,6 @@ local function getBestTargetCharacter(attackerCharacter, swordTier, screenPos)
                             end
                         end
 
-                        -- 距離優先 + 画面中央寄り優先
                         local score = worldDistance + screenPenalty
                         if score < bestScore then
                             bestScore = score
@@ -317,14 +325,17 @@ local function tryLocalHit(screenPos)
     end
 
     if SwordReach.canHit(character, targetCharacter, swordTier) then
-        local aRoot = character:FindFirstChild("HumanoidRootPart")
-        local tRoot = targetCharacter:FindFirstChild("HumanoidRootPart")
+        local aRoot = getModelRootPart(character)
+        local tRoot = getModelRootPart(targetCharacter)
         local d = 0
         if aRoot and tRoot then
             d = (aRoot.Position - tRoot.Position).Magnitude
         end
 
-        print("Hit! sword:", swordTier, "reach:", SwordReach.getReach(swordTier), "distance:", math.floor(d * 100) / 100, "target:", targetCharacter.Name)
+        local targetPlayer = Players:GetPlayerFromCharacter(targetCharacter)
+        local targetType = targetPlayer and "Player" or "NPC"
+
+        print("Hit!", "type:", targetType, "sword:", swordTier, "reach:", SwordReach.getReach(swordTier), "distance:", math.floor(d * 100) / 100, "target:", targetCharacter.Name)
     else
         print("Out of range")
     end
